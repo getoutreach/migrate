@@ -104,6 +104,8 @@ func WithConn(ctx context.Context, conn *sql.Conn, config *Config) (database.Dri
 		config.MigrationsTable = DefaultMigrationsTable
 	}
 
+	fmt.Printf("database: %s, schema: %s\n", config.DatabaseName, config.SchemaName)
+
 	config.migrationsSchemaName = config.SchemaName
 	config.migrationsTableName = config.MigrationsTable
 	if config.MigrationsTableQuoted {
@@ -117,14 +119,9 @@ func WithConn(ctx context.Context, conn *sql.Conn, config *Config) (database.Dri
 		}
 	}
 
-	//conn, err := instance.Conn(context.Background())
-	// if err != nil {
-	// 	return nil, err
-	// }
 
 	px := &Postgres{
 		conn:   conn,
-		//db:     instance,
 		config: config,
 	}
 
@@ -136,71 +133,7 @@ func WithConn(ctx context.Context, conn *sql.Conn, config *Config) (database.Dri
 }
 
 func (p *Postgres) Open(url string) (database.Driver, error) {
-	// purl, err := nurl.Parse(url)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// db, err := sql.Open("postgres", migrate.FilterCustomQuery(purl).String())
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// migrationsTable := purl.Query().Get("x-migrations-table")
-	// migrationsTableQuoted := false
-	// if s := purl.Query().Get("x-migrations-table-quoted"); len(s) > 0 {
-	// 	migrationsTableQuoted, err = strconv.ParseBool(s)
-	// 	if err != nil {
-	// 		return nil, fmt.Errorf("Unable to parse option x-migrations-table-quoted: %w", err)
-	// 	}
-	// }
-	// if (len(migrationsTable) > 0) && (migrationsTableQuoted) && ((migrationsTable[0] != '"') || (migrationsTable[len(migrationsTable)-1] != '"')) {
-	// 	return nil, fmt.Errorf("x-migrations-table must be quoted (for instance '\"migrate\".\"schema_migrations\"') when x-migrations-table-quoted is enabled, current value is: %s", migrationsTable)
-	// }
-
-	// statementTimeoutString := purl.Query().Get("x-statement-timeout")
-	// statementTimeout := 0
-	// if statementTimeoutString != "" {
-	// 	statementTimeout, err = strconv.Atoi(statementTimeoutString)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// }
-
-	// multiStatementMaxSize := DefaultMultiStatementMaxSize
-	// if s := purl.Query().Get("x-multi-statement-max-size"); len(s) > 0 {
-	// 	multiStatementMaxSize, err = strconv.Atoi(s)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	if multiStatementMaxSize <= 0 {
-	// 		multiStatementMaxSize = DefaultMultiStatementMaxSize
-	// 	}
-	// }
-
-	// multiStatementEnabled := false
-	// if s := purl.Query().Get("x-multi-statement"); len(s) > 0 {
-	// 	multiStatementEnabled, err = strconv.ParseBool(s)
-	// 	if err != nil {
-	// 		return nil, fmt.Errorf("Unable to parse option x-multi-statement: %w", err)
-	// 	}
-	// }
-
-	// px, err := WithInstance(db, &Config{
-	// 	DatabaseName:          purl.Path,
-	// 	MigrationsTable:       migrationsTable,
-	// 	MigrationsTableQuoted: migrationsTableQuoted,
-	// 	StatementTimeout:      time.Duration(statementTimeout) * time.Millisecond,
-	// 	MultiStatementEnabled: multiStatementEnabled,
-	// 	MultiStatementMaxSize: multiStatementMaxSize,
-	// })
-
-	// if err != nil {
-	// 	return nil, err
-	// }
-
 	return nil, fmt.Errorf("migrate Open(url) is not implemented, use WithConn()")
-	//return px, nil
 }
 
 func (p *Postgres) Close() error {
@@ -275,6 +208,7 @@ func (p *Postgres) runStatement(statement []byte) error {
 	if strings.TrimSpace(query) == "" {
 		return nil
 	}
+	fmt.Printf("%s\n", query)
 	if _, err := p.conn.ExecContext(ctx, query); err != nil {
 		if pgErr, ok := err.(*pq.Error); ok {
 			var line uint
@@ -335,10 +269,12 @@ func runesLastIndex(input []rune, target rune) int {
 }
 
 func (p *Postgres) SetVersion(version int, dirty bool) error {
+	fmt.Printf("\n\nSetVersion: %d, dirty: %v\n", version, dirty)
 	tx, err := p.conn.BeginTx(context.Background(), &sql.TxOptions{})
 	if err != nil {
 		return &database.Error{OrigErr: err, Err: "transaction start failed"}
 	}
+	fmt.Printf("\n\nBeginTX ok\n")
 
 	query := `TRUNCATE ` + pq.QuoteIdentifier(p.config.migrationsSchemaName) + `.` + pq.QuoteIdentifier(p.config.migrationsTableName)
 	if _, err := tx.Exec(query); err != nil {
@@ -347,11 +283,15 @@ func (p *Postgres) SetVersion(version int, dirty bool) error {
 		}
 		return &database.Error{OrigErr: err, Query: []byte(query)}
 	}
+	fmt.Printf("\n\nTruncate ok\n")
 
+
+	fmt.Printf("\n\nchecking version and about to insert into schema_versions\n")
 	// Also re-write the schema version for nil dirty versions to prevent
 	// empty schema version for failed down migration on the first migration
 	// See: https://github.com/getoutreach/migrate/issues/330
 	if version >= 0 || (version == database.NilVersion && dirty) {
+		fmt.Printf("inserting into schema_migrations: version: %d, dirty: %v\n", version, dirty)
 		query = `INSERT INTO ` + pq.QuoteIdentifier(p.config.migrationsSchemaName) + `.` + pq.QuoteIdentifier(p.config.migrationsTableName) + ` (version, dirty) VALUES ($1, $2)`
 		if _, err := tx.Exec(query, version, dirty); err != nil {
 			if errRollback := tx.Rollback(); errRollback != nil {
@@ -369,10 +309,12 @@ func (p *Postgres) SetVersion(version int, dirty bool) error {
 }
 
 func (p *Postgres) Version() (version int, dirty bool, err error) {
-	query := `SELECT version, dirty FROM ` + pq.QuoteIdentifier(p.config.migrationsSchemaName) + `.` + pq.QuoteIdentifier(p.config.migrationsTableName) + ` LIMIT 1`
-	err = p.conn.QueryRowContext(context.Background(), query).Scan(&version, &dirty)
+	var currentSchema string
+	query := `SELECT version, dirty, current_schema() FROM ` + pq.QuoteIdentifier(p.config.migrationsSchemaName) + `.` + pq.QuoteIdentifier(p.config.migrationsTableName) + ` LIMIT 1`
+	err = p.conn.QueryRowContext(context.Background(), query).Scan(&version, &dirty, &currentSchema)
 	switch {
 	case err == sql.ErrNoRows:
+		fmt.Printf("sql.ErrNoRow: database.NilVersion, dirty: false\n")
 		return database.NilVersion, false, nil
 
 	case err != nil:
@@ -381,9 +323,11 @@ func (p *Postgres) Version() (version int, dirty bool, err error) {
 				return database.NilVersion, false, nil
 			}
 		}
+		fmt.Printf("err, not dirty\n")
 		return 0, false, &database.Error{OrigErr: err, Query: []byte(query)}
 
 	default:
+		fmt.Printf("Version, default: version: %d, dirty: %v, schema: %s\n", version, dirty, currentSchema)
 		return version, dirty, nil
 	}
 }
