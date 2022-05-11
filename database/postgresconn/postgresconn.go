@@ -191,7 +191,7 @@ func (p *Postgres) Run(migration io.Reader) error {
 		
 		if err := multistmt.Parse(migration, multiStmtDelimiter, p.config.MultiStatementMaxSize, func(m []byte) error {
 			if err := p.runStatement(m); err != nil {
-				return errors.Wrapf(err, "%s", string(m))
+				return errors.Wrap(err, string(m))
 			}
 			return nil
 		}); err != nil {
