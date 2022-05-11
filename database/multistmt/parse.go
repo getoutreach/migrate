@@ -53,7 +53,7 @@ func Parse(reader io.Reader, delimiter []byte, maxMigrationSize int, h Handler) 
 	fnbody := false
 	// accumulate statements intermediate buffer, this buffer will be incomplete
 	// until end-of-statement char ';'
-	accum := make([]byte, 0, 1024)
+	accum := make([]byte, 0, 2048)
 	// completed statements, contents of accum will be dumped in here
 	stmts := make([][]byte, 0, 1000)
 
@@ -79,13 +79,9 @@ func Parse(reader io.Reader, delimiter []byte, maxMigrationSize int, h Handler) 
 				case '$':
 					// look around is there another $?
 					// is there also and ending marker like "$$ LANGUAGE plpgsql"
-					if buf[i+1] == '$' {
+					if len(buf) >= i+1 && buf[i+1] == '$' {
 						// set fnbody false to trigger the check for the next `;`
-						if fnbody {
-							fnbody = false
-						} else {
-							fnbody = true
-						}
+						fnbody = !fnbody
 					}
 					if !discard {
 						accum = append(accum, ch)
@@ -129,7 +125,6 @@ func Parse(reader io.Reader, delimiter []byte, maxMigrationSize int, h Handler) 
 		fmt.Println(i, string(stmt))
 		if err := h(stmt); err != nil {
 			return errors.Wrapf(err, "%s", stmt)
-
 		}
 	}
 	return nil
