@@ -81,11 +81,7 @@ func Parse(reader io.Reader, delimiter []byte, maxMigrationSize int, h Handler) 
 					// is there also an ending marker like "$$ LANGUAGE plpgsql"
 					if buf[i+1] == '$' {
 						// set fnbody false to trigger the check for the next `;`
-						if fnbody {
-							fnbody = false
-						} else {
-							fnbody = true
-						}
+						fnbody = !fnbody
 					}
 					if !discard {
 						accum = append(accum, ch)
