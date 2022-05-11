@@ -189,15 +189,13 @@ func (p *Postgres) Run(migration io.Reader) error {
 		}
 		fmt.Printf("current schema %v\n", currentSchema)
 		
-		if err := multistmt.Parse(migration, multiStmtDelimiter, p.config.MultiStatementMaxSize, func(m []byte) error {
+		err := multistmt.Parse(migration, multiStmtDelimiter, p.config.MultiStatementMaxSize, func(m []byte) error {
 			if err := p.runStatement(m); err != nil {
 				return errors.Wrap(err, string(m))
 			}
 			return nil
-		}); err != nil {
-			return err
-		}
-		return nil
+		})
+		return err
 	}
 	migr, err := ioutil.ReadAll(migration)
 	if err != nil {
@@ -218,11 +216,7 @@ func (p *Postgres) runStatement(statement []byte) error {
 		return nil
 	}
 	
-	if res, err := p.conn.ExecContext(ctx, query); err != nil {
-		fmt.Printf("%+v, err: %+v\n", res, err)
-
-		// rowsAffected, err := res.RowsAffected()
-		// fmt.Printf("rowsAffected: %d, res.Err: %+v\n", rowsAffected, err)
+	if _, err := p.conn.ExecContext(ctx, query); err != nil {
 		if pgErr, ok := err.(*pq.Error); ok {
 			var line uint
 			var col uint
