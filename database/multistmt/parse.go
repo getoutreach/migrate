@@ -72,7 +72,6 @@ func Parse(reader io.Reader, delimiter []byte, maxMigrationSize int, h Handler) 
 						discard = true
 					}
 				}
-
 				// output the content, for logging
 				fmt.Printf("%c", buf[i])
 				switch ch := buf[i]; ch {
