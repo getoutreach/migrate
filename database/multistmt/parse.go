@@ -78,7 +78,7 @@ func Parse(reader io.Reader, delimiter []byte, maxMigrationSize int, h Handler) 
 				switch ch := buf[i]; ch {
 				case '$':
 					// look around is there another $?
-					// is there also and ending marker like "$$ LANGUAGE plpgsql"
+					// is there also an ending marker like "$$ LANGUAGE plpgsql"
 					if buf[i+1] == '$' {
 						// set fnbody false to trigger the check for the next `;`
 						if fnbody {
