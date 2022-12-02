@@ -47,13 +47,22 @@ func Parse(reader io.Reader, _ []byte, _ int, replacementStatement string, h Han
 	tmp := make([]byte, 0, 10)
 	a := 0
 	for err == nil {
+		// this is non-performant but very clear that the buf variable is wiped out
+		//completely between loop iterations
 		buf = make([]byte, ParseBufSize)
 		n, err := reader.Read(buf)
 		trace("tmp(2): '%s', buf: %s, discard: %v\n", tmp, buf, discard)
+		// tmp is the carry-over buffer,
+		//if the previous loop iteration had two few characters to make comparisions,
+		//tmp will have the characters at the point the loop iteration was abandoned(
+		//break'd out of)
 		if len(tmp) > 0 {
 			trace("copying '%s' to buf\n", tmp)
 			buf = append(tmp, buf[:n]...)
 			trace("buf: %s\n", buf)
+			// n needs to include the length of tmp since it was copied into n,
+			// but n originally only held the number of chars read from the
+			// reader.Read(buf) call.
 			n = n + len(tmp)
 			tmp = tmp[:0]
 
