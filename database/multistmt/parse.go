@@ -53,7 +53,7 @@ func Parse(reader io.Reader, _ []byte, _ int, replacementStatement string, h Han
 		n, err := reader.Read(buf)
 		trace("tmp(2): '%s', buf: %s, discard: %v\n", tmp, buf, discard)
 		// tmp is the carry-over buffer,
-		//if the previous loop iteration had two few characters to make comparisions,
+		//if the previous loop iteration had too few characters to make comparisons,
 		//tmp will have the characters at the point the loop iteration was abandoned(
 		//break'd out of)
 		if len(tmp) > 0 {
