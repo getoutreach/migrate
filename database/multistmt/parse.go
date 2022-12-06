@@ -2,10 +2,10 @@
 package multistmt
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/pkg/errors"
 	"io"
-	"strings"
 )
 
 // ParseBufSize is the buffer size for the multi-statement reader
@@ -130,9 +130,8 @@ func Parse(reader io.Reader, _ []byte, _ int, replacementStatement string, h Han
 						stmt := make([]byte, len(accum))
 						copy(stmt, accum)
 						if replacementStatement != "" {
-							stmt := strings.ReplaceAll(string(stmt), "<SCHEMA_NAME>",
-								replacementStatement)
-							stmt = []byte(stmt)
+							stmt = bytes.ReplaceAll(stmt, []byte("<SCHEMA_NAME>"),
+								[]byte(replacementStatement))
 						}
 
 						// fully formed statement(stmt), exec the statement
