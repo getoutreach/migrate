@@ -3,10 +3,9 @@ package multistmt
 
 import (
 	"fmt"
+	"github.com/pkg/errors"
 	"io"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 // ParseBufSize is the buffer size for the multi-statement reader
@@ -41,32 +40,29 @@ func Parse(reader io.Reader, _ []byte, _ int, replacementStatement string, h Han
 	// accumulate statements intermediate buffer, this buffer will be incomplete
 	// until end-of-statement char ';'
 	accum := make([]byte, 0, 2048)
-	// completed statements, contents of accum will be dumped in here
-	stmts := make([][]byte, 0, 1000)
-
-	tmp := make([]byte, 0, 10)
-	a := 0
+	// tmp is a carry-over buffer used when doing look ahead,
+	// tmp is the characters in the buf that are insufficient to do a look ahead
+	// comparison but could be combined with characters further in the stream.
+	var tmp []byte
+	// counter is using during tracing to keep track of a total number of characters
+	counter := 0
 	for err == nil {
-		// this is non-performant but very clear that the buf variable is wiped out
-		//completely between loop iterations
-		buf = make([]byte, ParseBufSize)
 		n, err := reader.Read(buf)
 		trace("tmp(2): '%s', buf: %s, discard: %v\n", tmp, buf, discard)
 		// tmp is the carry-over buffer,
-		//if the previous loop iteration had too few characters to make comparisons,
-		//tmp will have the characters at the point the loop iteration was abandoned(
-		//break'd out of)
-		if len(tmp) > 0 {
-			trace("copying '%s' to buf\n", tmp)
-			buf = append(tmp, buf[:n]...)
-			trace("buf: %s\n", buf)
-			// n needs to include the length of tmp since it was copied into n,
-			// but n originally only held the number of chars read from the
-			// reader.Read(buf) call.
-			n = n + len(tmp)
-			tmp = tmp[:0]
+		// if the previous loop iteration had two few characters to make comparisions,
+		// tmp will have the characters at the point the loop iteration was abandoned(
+		// break'd out of)
+		trace("prepending '%s' to buf: %s\n", tmp, buf)
+		buf = append(tmp, buf...)
+		trace("len(buf): %d, buf: %s\n", len(buf), buf)
+		// n needs to include the length of tmp since it was copied into n,
+		// but n originally only held the number of chars read from the
+		// reader.Read(buf) call.
+		n = n + len(tmp)
+		// erase tmp, we put tmp's contents in buf
+		tmp = tmp[:0]
 
-		}
 		if n > 0 {
 			// buf needs capacity(it is initialized with capapcity and length the same)
 			// so we can only loop to the bytes read, not the capacity nor length
@@ -103,11 +99,11 @@ func Parse(reader io.Reader, _ []byte, _ int, replacementStatement string, h Han
 				}
 				// output the content, for logging
 				if buf[i] == ' ' {
-					trace("%d.\n", a+i)
+					trace("%d.\n", counter+i)
 				} else if buf[i] == '\t' {
-					trace("%d\\t\n", a+i)
+					trace("%d\\t\n", counter+i)
 				} else {
-					trace("%d '%c'\n", a+i, buf[i])
+					trace("%d '%c'\n", counter+i, buf[i])
 				}
 				switch ch := buf[i]; ch {
 				case '$':
@@ -131,16 +127,19 @@ func Parse(reader io.Reader, _ []byte, _ int, replacementStatement string, h Han
 					if !discard {
 						// include ';' in accum
 						accum = append(accum, ch)
-						c1 := make([]byte, len(accum))
-						copy(c1, accum)
+						stmt := make([]byte, len(accum))
+						copy(stmt, accum)
 						if replacementStatement != "" {
-							s1 := strings.ReplaceAll(string(c1), "<SCHEMA_NAME>", replacementStatement)
-							c1 = []byte(s1)
+							stmt := strings.ReplaceAll(string(stmt), "<SCHEMA_NAME>",
+								replacementStatement)
+							stmt = []byte(stmt)
 						}
-						// in the future this could be the place to run statements
-						//instead of keeping them as an array(
-						//the array subverts the streaming intention of this reader)
-						stmts = append(stmts, c1)
+
+						// fully formed statement(stmt), exec the statement
+						trace("%s\n", string(stmt))
+						if err := h(stmt); err != nil {
+							return errors.Wrapf(err, "%s", stmt)
+						}
 						// reset accum, maintain allocated memory
 						accum = accum[:0]
 					}
@@ -161,19 +160,13 @@ func Parse(reader io.Reader, _ []byte, _ int, replacementStatement string, h Han
 			}
 			trace("tmp(1): '%s'\n", tmp)
 		}
-		a = a + n - len(tmp)
+		// keep a counter of the characters we've seen, used for debugging/tracing output
+		counter = counter + n - len(tmp)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return err
-		}
-	}
-
-	for i, stmt := range stmts {
-		fmt.Println(i, string(stmt))
-		if err := h(stmt); err != nil {
-			return errors.Wrapf(err, "%s", stmt)
 		}
 	}
 	return nil
