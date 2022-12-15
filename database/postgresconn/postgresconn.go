@@ -499,6 +499,11 @@ func (p *Postgres) ensureVersionTable() (err error) {
 	if err := p.ensurePrimaryKeyExists(); err != nil {
 		return &database.Error{OrigErr: err}
 	}
+
+	if err := p.ensureUniqueConstraintExists(); err != nil {
+		return &database.Error{OrigErr: err}
+	}
+
 	return nil
 }
 
@@ -567,6 +572,57 @@ AND format_type(a.atttypid, a.atttypmod) = 'bigint'`, tableName, primaryKeyName)
 	}
 
 	// rows exist for the primary key name
+	return true, nil
+}
+
+// ensureUniqueConstraintExists will add new unique constraint to the schema version table
+func (p *Postgres) ensureUniqueConstraintExists() error {
+	ctx := context.Background()
+	exists, err := p.uniqueConstraintExists(p.config.MigrationsTable, "version")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
+	_, err = p.conn.ExecContext(ctx,
+		fmt.Sprintf(`ALTER TABLE %q ADD CONSTRAINT unique_version UNIQUE (version)`,
+			p.config.MigrationsTable))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// uniqueConstraintExists check existence of unique constraint
+// only supports single column unique check, could add array support for multiple columns
+func (p *Postgres) uniqueConstraintExists(tableName, columnName string) (bool, error) {
+	ctx := context.Background()
+	stmt := fmt.Sprintf(`SELECT 1
+FROM pg_index
+  JOIN pg_attribute a ON a.attrelid = pg_index.indrelid AND a.attnum = ANY(pg_index.indkey)
+  JOIN pg_class ON pg_index.indrelid = pg_class.oid
+  JOIN pg_namespace on pg_namespace.oid = pg_class.relnamespace
+WHERE pg_index.indrelid = '%s'::regclass
+  AND  pg_index.indisunique
+  AND pg_namespace.nspname = current_schema()
+  and a.attname = '%s'
+AND format_type(a.atttypid, a.atttypmod) = 'bigint'`, tableName, columnName)
+	// We expect one row to come back, for the version column and
+	rows := p.conn.QueryRowContext(ctx, stmt)
+	var exists int
+	err := rows.Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+
+	// some other kind of err
+	if err != nil {
+		return false, err
+	}
+
+	// rows exist
 	return true, nil
 }
 
