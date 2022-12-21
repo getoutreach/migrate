@@ -462,10 +462,6 @@ func (p *Postgres) ensureVersionTable() (err error) {
 		return &database.Error{OrigErr: err, Query: []byte(stmt)}
 	}
 
-	if count == 1 {
-		return nil
-	}
-
 	stmt = fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %q.%q`+
 		` (version bigint not null, dirty boolean not null)`,
 		p.config.migrationsSchemaName, p.config.migrationsTableName)
