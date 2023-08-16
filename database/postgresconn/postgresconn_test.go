@@ -283,7 +283,9 @@ func TestErrorParsing(t *testing.T) {
 			}
 		}()
 
-		wantErr := `migration failed: syntax error at or near "TABLEE" (column 9) in line 1:  CREATE TABLEE bar (bar text); (details: pq: syntax error at or near "TABLEE")`
+		// Parser no longer does line or statement parsing.
+		//
+		wantErr := `migration failed: syntax error at or near "TABLEE" (column 37) in line 1: CREATE TABLE foo (foo text); CREATE TABLEE bar (bar text); (details: pq: syntax error at or near "TABLEE")`
 		if err := d.Run(strings.NewReader(`CREATE TABLE foo (foo text); CREATE TABLEE bar (bar text);`)); err == nil {
 			t.Fatal("expected err but got nil")
 		} else if err.Error() != wantErr {
