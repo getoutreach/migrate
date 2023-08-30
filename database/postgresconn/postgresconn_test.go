@@ -294,6 +294,31 @@ func TestErrorParsing(t *testing.T) {
 	})
 }
 
+func TestEmbeddedComment(t *testing.T) {
+	dktesting.ParallelTest(t, specs, func(t *testing.T, c dktest.ContainerInfo) {
+		ip, port, err := c.FirstPort()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		addr := pgConnectionString(ip, port)
+		p := &Postgres{}
+		d, err := p.Open(addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := d.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+
+		if err := d.Run(strings.NewReader(`create table consumers(skip boolean, skip_reason text, name text); UPDATE consumers SET skip = true, skip_reason = 'https://outreach-hq.slack.com/archives/C03TX2QNHTQ/p1686116838617179 -- settings org life events are unneeded' WHERE name = 'settings'`)); err != nil {
+			t.Fatalf("expected no error but got %v", err)
+		}
+	})
+}
+
 func TestFilterCustomQuery(t *testing.T) {
 	dktesting.ParallelTest(t, specs, func(t *testing.T, c dktest.ContainerInfo) {
 		ip, port, err := c.FirstPort()
