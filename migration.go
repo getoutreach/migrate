@@ -27,6 +27,12 @@ type Migration struct {
 	// Can be -1, implying that this is a NilVersion.
 	TargetVersion int
 
+	// NoTransaction indicates this migration should not be wrapped in a
+	// transaction. Detected via a "-- Transaction: false" directive in the
+	// migration body. This is required for statements like
+	// CREATE INDEX CONCURRENTLY that cannot run inside a transaction.
+	NoTransaction bool
+
 	// Body holds an io.ReadCloser to the source.
 	Body io.ReadCloser
 

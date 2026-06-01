@@ -23,6 +23,13 @@ type Stub struct {
 	IsDirty           bool
 	isLocked          atomic.Bool
 
+	// BeginCount tracks how many times Begin() was called.
+	BeginCount int
+	// CommitCount tracks how many times Commit() was called.
+	CommitCount int
+	// RollbackCount tracks how many times Rollback() was called.
+	RollbackCount int
+
 	Config *Config
 }
 
@@ -102,13 +109,16 @@ func (s *Stub) EqualSequence(seq []string) bool {
 }
 
 func (m *Stub) Begin() error {
+	m.BeginCount++
 	return nil
 }
 
 func (m *Stub) Commit() error {
+	m.CommitCount++
 	return nil
 }
 
 func (m *Stub) Rollback() error {
+	m.RollbackCount++
 	return nil
 }

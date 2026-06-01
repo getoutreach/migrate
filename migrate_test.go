@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -1437,5 +1438,147 @@ func equalDbSeq(t *testing.T, i int, expected migrationSequence, got *dStub.Stub
 	bs := expected.bodySequence()
 	if !got.EqualSequence(bs) {
 		t.Fatalf("\nexpected sequence %v,\ngot               %v, in %v", bs, got.MigrationSequence, i)
+	}
+}
+
+func TestReadMigrationHeaders(t *testing.T) {
+	tests := []struct {
+		name            string
+		body            string
+		expectHeaders   map[string]string
+		expectNoTx      bool
+		expectRestHas   string
+	}{
+		{
+			name:          "Transaction: false header",
+			body:          "-- Transaction: false\nCREATE INDEX CONCURRENTLY idx ON t(c);",
+			expectHeaders: map[string]string{"Transaction": "false"},
+			expectNoTx:    true,
+			expectRestHas: "CREATE INDEX CONCURRENTLY",
+		},
+		{
+			name:          "multiple headers",
+			body:          "-- Revises: 000_init.up.sql\n-- Transaction: false\nCREATE INDEX CONCURRENTLY idx ON t(c);",
+			expectHeaders: map[string]string{"Revises": "000_init.up.sql", "Transaction": "false"},
+			expectNoTx:    true,
+			expectRestHas: "CREATE INDEX CONCURRENTLY",
+		},
+		{
+			name:          "no Transaction header",
+			body:          "-- Revises: 000_init.up.sql\nCREATE TABLE t (id int);",
+			expectHeaders: map[string]string{"Revises": "000_init.up.sql"},
+			expectNoTx:    false,
+			expectRestHas: "CREATE TABLE",
+		},
+		{
+			name:          "header after SQL is not parsed",
+			body:          "CREATE TABLE t (id int);\n-- Transaction: false",
+			expectHeaders: map[string]string{},
+			expectNoTx:    false,
+			expectRestHas: "CREATE TABLE",
+		},
+		{
+			name:          "empty body",
+			body:          "",
+			expectHeaders: map[string]string{},
+			expectNoTx:    false,
+		},
+		{
+			name:          "header with leading whitespace",
+			body:          "  -- Transaction: false  \nCREATE INDEX CONCURRENTLY idx ON t(c);",
+			expectHeaders: map[string]string{"Transaction": "false"},
+			expectNoTx:    true,
+			expectRestHas: "CREATE INDEX CONCURRENTLY",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			headers, rest := readMigrationHeaders(strings.NewReader(tt.body))
+
+			// Check expected headers are present.
+			for k, v := range tt.expectHeaders {
+				if headers[k] != v {
+					t.Errorf("header %q = %q, want %q", k, headers[k], v)
+				}
+			}
+
+			// Check NoTransaction detection.
+			gotNoTx := strings.EqualFold(headers["Transaction"], "false")
+			if gotNoTx != tt.expectNoTx {
+				t.Errorf("NoTransaction = %v, want %v", gotNoTx, tt.expectNoTx)
+			}
+
+			// Check that the rest reader contains the SQL body.
+			if tt.expectRestHas != "" {
+				remaining, _ := io.ReadAll(rest)
+				if !strings.Contains(string(remaining), tt.expectRestHas) {
+					t.Errorf("rest does not contain %q, got %q", tt.expectRestHas, string(remaining))
+				}
+			}
+		})
+	}
+}
+
+func TestRunNoTransaction(t *testing.T) {
+	m, _ := New("stub://", "stub://")
+	dbDrv := m.databaseDrv.(*dStub.Stub)
+
+	body := "-- Transaction: false\nCREATE INDEX CONCURRENTLY idx ON t(c);"
+	mx, err := NewMigration(ioutil.NopCloser(strings.NewReader(body)), "no_tx_migration", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Run(mx); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := m.Version()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Version != 2 {
+		t.Errorf("expected version 2, got %v", v.Version)
+	}
+	if v.Dirty {
+		t.Error("expected dirty to be false")
+	}
+
+	// Begin/Commit should NOT have been called for a no-transaction migration
+	if dbDrv.BeginCount != 0 {
+		t.Errorf("expected BeginCount 0, got %d", dbDrv.BeginCount)
+	}
+	if dbDrv.CommitCount != 0 {
+		t.Errorf("expected CommitCount 0, got %d", dbDrv.CommitCount)
+	}
+	if dbDrv.RollbackCount != 0 {
+		t.Errorf("expected RollbackCount 0, got %d", dbDrv.RollbackCount)
+	}
+}
+
+func TestRunWithTransaction(t *testing.T) {
+	m, _ := New("stub://", "stub://")
+	dbDrv := m.databaseDrv.(*dStub.Stub)
+
+	body := "CREATE TABLE t (id int);"
+	mx, err := NewMigration(ioutil.NopCloser(strings.NewReader(body)), "tx_migration", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Run(mx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Begin/Commit SHOULD have been called for a normal migration
+	if dbDrv.BeginCount != 1 {
+		t.Errorf("expected BeginCount 1, got %d", dbDrv.BeginCount)
+	}
+	if dbDrv.CommitCount != 1 {
+		t.Errorf("expected CommitCount 1, got %d", dbDrv.CommitCount)
+	}
+	if dbDrv.RollbackCount != 0 {
+		t.Errorf("expected RollbackCount 0, got %d", dbDrv.RollbackCount)
 	}
 }
