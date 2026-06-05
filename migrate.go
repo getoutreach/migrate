@@ -5,9 +5,13 @@
 package migrate
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -753,14 +757,27 @@ func (m *Migrate) runMigrations(ret <-chan interface{}) error {
 		case *Migration:
 			migr := r
 
-			if err := m.databaseDrv.Begin(); err != nil {
-				return err
+			// Parse "-- Key: Value" headers from the migration body.
+			if migr.Body != nil {
+				headers, rest := readMigrationHeaders(migr.BufferedBody)
+				migr.BufferedBody = rest
+				if strings.EqualFold(headers["Transaction"], "false") {
+					migr.NoTransaction = true
+				}
+			}
+
+			if !migr.NoTransaction {
+				if err := m.databaseDrv.Begin(); err != nil {
+					return err
+				}
 			}
 
 			// set version with dirty state
 			if err := m.databaseDrv.SetVersion(migr.TargetVersion, true); err != nil {
-				if err := m.databaseDrv.Rollback(); err != nil {
-					m.logErr(err)
+				if !migr.NoTransaction {
+					if rbErr := m.databaseDrv.Rollback(); rbErr != nil {
+						m.logErr(rbErr)
+					}
 				}
 				return err
 			}
@@ -768,12 +785,14 @@ func (m *Migrate) runMigrations(ret <-chan interface{}) error {
 			if migr.Body != nil {
 				m.logVerbosePrintf("Read and execute %v\n", migr.LogString())
 				if err := m.databaseDrv.Run(migr.BufferedBody); err != nil {
-					if err := m.databaseDrv.SetFailed(migr.TargetVersion,
-						err); err != nil {
-						if err := m.databaseDrv.Rollback(); err != nil {
-							m.logErr(err)
+					if sfErr := m.databaseDrv.SetFailed(migr.TargetVersion,
+						err); sfErr != nil {
+						if !migr.NoTransaction {
+							if rbErr := m.databaseDrv.Rollback(); rbErr != nil {
+								m.logErr(rbErr)
+							}
 						}
-						m.logErr(err)
+						m.logErr(sfErr)
 					}
 					return err
 				}
@@ -782,15 +801,19 @@ func (m *Migrate) runMigrations(ret <-chan interface{}) error {
 			// set clean state
 			if err := m.databaseDrv.SetVersion(migr.TargetVersion, false); err != nil {
 				m.logErr(err)
-				if err := m.databaseDrv.Rollback(); err != nil {
-					m.logErr(err)
+				if !migr.NoTransaction {
+					if rbErr := m.databaseDrv.Rollback(); rbErr != nil {
+						m.logErr(rbErr)
+					}
 				}
 				return err
 			}
 
-			if err := m.databaseDrv.Commit(); err != nil {
-				m.logErr(err)
-				return err
+			if !migr.NoTransaction {
+				if err := m.databaseDrv.Commit(); err != nil {
+					m.logErr(err)
+					return err
+				}
 			}
 
 			endTime := time.Now()
@@ -811,6 +834,41 @@ func (m *Migrate) runMigrations(ret <-chan interface{}) error {
 		}
 	}
 	return nil
+}
+
+// readMigrationHeaders reads "-- Key: Value" comment headers from the start
+// of a migration body. It reads the entire body, parses headers from the
+// leading comment block, and returns the headers plus the original body
+// content as a new reader.
+func readMigrationHeaders(r io.Reader) (map[string]string, io.Reader) {
+	body, err := io.ReadAll(r)
+	if err != nil || len(body) == 0 {
+		return map[string]string{}, bytes.NewReader(body)
+	}
+
+	headers := make(map[string]string)
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	for scanner.Scan() {
+		trimmed := strings.TrimSpace(scanner.Text())
+
+		// Skip blank lines in the header block.
+		if trimmed == "" {
+			continue
+		}
+
+		// Parse "-- Key: Value" directives.
+		if after, ok := strings.CutPrefix(trimmed, "--"); ok {
+			if key, value, found := strings.Cut(strings.TrimSpace(after), ":"); found {
+				headers[strings.TrimSpace(key)] = strings.TrimSpace(value)
+				continue
+			}
+		}
+
+		// First non-header line — stop parsing.
+		break
+	}
+
+	return headers, bytes.NewReader(body)
 }
 
 // versionExists checks the source if either the up or down migration for
